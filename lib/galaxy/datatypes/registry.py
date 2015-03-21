@@ -23,6 +23,7 @@ import assembly
 import ngsindex
 import graph
 import text
+import multifile
 import galaxy.util
 from galaxy.util.odict import odict
 from display_applications.application import DisplayApplication
@@ -49,6 +50,8 @@ class Registry( object ):
         self.set_external_metadata_tool = None
         self.sniff_order = []
         self.upload_file_formats = []
+        # Collection that stores datatypes that are able to merge multiple files into a single dataset.
+        self.datatypes_with_merge = []
         # Datatype elements defined in local datatypes_conf.xml that contain display applications.
         self.display_app_containers = []
         # Datatype elements in datatypes_conf.xml included in installed
@@ -238,6 +241,13 @@ class Registry( object ):
                                     self.available_tracks.append( extension )
                                 if display_in_upload and extension not in self.upload_file_formats:
                                     self.upload_file_formats.append( extension )
+                                # If the merge method is defined in datatype, we add it to
+                                # the datatypes_with_merge collection (this is later used
+                                # in the upload_multi tool to define which tools are able
+                                # to merge multiple files into a single dataset)
+                                has_merge = hasattr(self.datatypes_by_extension[extension], 'merge')
+                                if has_merge:
+                                    self.datatypes_with_merge.append(extension)
                                 # Max file size cut off for setting optional metadata.
                                 self.datatypes_by_extension[ extension ].max_optional_metadata_filesize = elem.get( 'max_optional_metadata_filesize', None )
                                 for converter in elem.findall( 'converter' ):
@@ -287,6 +297,7 @@ class Registry( object ):
                                          handling_proprietary_datatypes=handling_proprietary_datatypes,
                                          override=override )
             self.upload_file_formats.sort()
+            self.datatypes_with_merge.sort()
             # Load build sites
             self.load_build_sites( root )
             # Persist the xml form of the registry into a temporary file so that it can be loaded from the command line by tools and
