@@ -1026,6 +1026,10 @@ def mkstemp_ln( src, prefix='mkstemp_ln_' ):
         except OSError, e:
             if e.errno == errno.EEXIST:
                 continue  # try again
+            elif e.errno == errno.EPERM:
+                # fallback to copying files (as of python 2.7.9)
+                shutil.copyfile(src, file)
+                return (os.path.abspath(file))
             raise
     raise IOError(errno.EEXIST, "No usable temporary file name found")
 

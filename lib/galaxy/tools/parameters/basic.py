@@ -569,6 +569,14 @@ class FileToolParameter( ToolParameter ):
         return None
 
 
+class MultiFileToolParameter(FileToolParameter):
+    """
+    Parameter to upload multiple files and merge them immediately.
+    """
+    def get_html_field(self, trans=None, value=None, other_values={}):
+        return form_builder.MultiFileField(self.name, ajax = self.ajax, value = value)
+
+
 class FTPFileToolParameter( ToolParameter ):
     """
     Parameter that takes a file uploaded via FTP as a value.
@@ -590,7 +598,7 @@ class FTPFileToolParameter( ToolParameter ):
         if trans is None or trans.user is None:
             user_ftp_dir = None
         else:
-            user_ftp_dir = trans.user_ftp_dir
+            user_ftp_dir = os.path.join(trans.app.config.ftp_upload_dir, trans.user.email)
         return form_builder.FTPFileField( self.name, user_ftp_dir, trans.app.config.ftp_upload_site, value=value )
 
     def from_html( self, value, trans=None, other_values={} ):
@@ -612,8 +620,14 @@ class FTPFileToolParameter( ToolParameter ):
         elif isinstance( value, unicode ) or isinstance( value, str ) or isinstance( value, list ):
             return value
 
-    def get_initial_value( self, trans, context, history=None ):
-        return None
+
+class FTPDirectoryToolParameter(FTPFileToolParameter):
+    def get_html_field(self, trans=None, value=None, other_values={}):
+        if trans is None or trans.user is None:
+            user_ftp_dir = None
+        else:
+            user_ftp_dir = os.path.join(trans.app.config.ftp_upload_dir, trans.user.email)
+        return form_builder.FTPDirectoryField(self.name, user_ftp_dir, trans.app.config.ftp_upload_site, value = value)
 
 
 class HiddenToolParameter( ToolParameter ):
@@ -2541,6 +2555,8 @@ parameter_types = dict(
     hidden_data=HiddenDataToolParameter,
     baseurl=BaseURLToolParameter,
     file=FileToolParameter,
+    ftpdirs=FTPDirectoryToolParameter,
+    multifile=MultiFileToolParameter,
     ftpfile=FTPFileToolParameter,
     data=DataToolParameter,
     data_collection=DataCollectionToolParameter,
