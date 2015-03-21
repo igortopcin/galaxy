@@ -14,42 +14,33 @@
 . /lib/lsb/init-functions
 
 USER="galaxy"
-GROUP="nogroup"
-DIR="/home/galaxy/galaxy_dist/"
-PYTHON="/usr/bin/python"
-OPTS="./scripts/paster.py serve --log-file /home/galaxy/galaxy.log config/galaxy.ini"
-PIDFILE="/var/run/galaxy.pid"
+
+START_SCRIPT="cd /opt/migalaxy;
+source /etc/afni/afni.sh
+source /etc/fsl/fsl.sh
+GALAXY_RUN_ALL=true ./run.sh --daemon"
+
+STOP_SCRIPT="cd /opt/migalaxy;
+GALAXY_RUN_ALL=true ./run.sh --stop-daemon"
 
 case "${1:-''}" in
   'start')
-           log_daemon_msg "Starting Galaxy"
-           if start-stop-daemon --chuid $USER --group $GROUP --start --make-pidfile \
-	             --pidfile $PIDFILE --background --chdir $DIR --exec $PYTHON -- $OPTS; then
-             log_end_msg 0
-           else
-             log_end_msg 1
-	   fi
-
-        ;;
+    log_daemon_msg "Starting Galaxy"
+    sudo -u $USER -- bash -c "$START_SCRIPT"
+    log_end_msg $?
+  ;;
   'stop')
-           log_daemon_msg "Stopping Galaxy" 
-	   if start-stop-daemon --stop --pidfile $PIDFILE; then
-	     log_end_msg 0
-	   else 
-	     log_end_msg 1
-	   fi
-        ;;
+    log_daemon_msg "Stopping Galaxy"
+    sudo -u $USER -s -- bash -c "$STOP_SCRIPT"
+    log_end_msg $?
+  ;;
   'restart')
            # restart commands here
-	   $0 stop
-	   $0 start
-			   
-        ;;
+    $0 stop
+    $0 start
+  ;;
   *)      # no parameter specified
-        echo "Usage: $SELF start|stop|restart|reload|force-reload|status"
-        exit 1
-        ;;
+    echo "Usage: $SELF start|stop|restart|reload|force-reload|status"
+    exit 1
+  ;;
 esac
-
-
-
