@@ -22,16 +22,53 @@ def persist_uploads( params ):
     if 'files' in params:
         new_files = []
         for upload_dataset in params['files']:
+            # assure that all elements of both upload/multiupload tools are in the parameters
+            upload_dataset['multifile_list'] = upload_dataset.get('multifile_list', [])
+            upload_dataset['ftp_directories'] = upload_dataset.get('ftp_directories', [])
+            upload_dataset['ftp_mergefiles'] = upload_dataset.get('ftp_mergefiles', [])
+            upload_dataset['ftp_files'] = upload_dataset.get('ftp_files', [])
+
             f = upload_dataset['file_data']
             if isinstance( f, FieldStorage ):
                 assert not isinstance( f.file, StringIO.StringIO )
                 assert f.file.name != '<fdopen>'
+
+                # disable merging ftp with browser uploads
+                upload_dataset['ftp_directories'] = []
+                upload_dataset['ftp_mergefiles'] = []
+
                 local_filename = util.mkstemp_ln( f.file.name, 'upload_file_data_' )
                 f.file.close()
-                upload_dataset['file_data'] = dict( filename=f.filename,
-                                                    local_filename=local_filename )
+                file_data = dict(filename=f.filename, local_filename=local_filename)
+                upload_dataset['file_data'] = file_data
+                upload_dataset['multifile_list'].append(file_data)
             elif type( f ) == dict and 'local_filename' not in f:
                 raise Exception( 'Uploaded file was encoded in a way not understood by Galaxy.' )
+
+            elif isinstance(f, list):
+            # persisting a multifile upload, creates hard links to all uploaded files and generates a list
+            # of upload_dataset['file_data']
+                upload_dataset['multifile_list'] = []
+
+                # disable merging ftp with browser uploads
+                upload_dataset['ftp_directories'] = []
+                upload_dataset['ftp_mergefiles'] = []
+
+                for upfile in f:
+                    assert not isinstance(upfile.file, StringIO.StringIO)
+                    assert upfile.file.name != '<fdopen>'
+                    local_filename = util.mkstemp_ln(upfile.file.name, 'upload_file_data_%s______' % upfile.filename )
+                    upfile.file.close()
+                    file_data = dict(filename=upfile.filename, local_filename=local_filename)
+                    # create list of files that have been uploaded in params dict
+                    upload_dataset['multifile_list'].append(file_data)
+                    # set the first file in the list as file_data.
+                    if upfile.filename == f[0].filename:
+                        upload_dataset['file_data'] = file_data
+
+            elif upload_dataset['ftp_directories'] or upload_dataset['ftp_mergefiles']:
+                upload_dataset['multifile_list'] = []
+
             if upload_dataset['url_paste'] and upload_dataset['url_paste'].strip() != '':
                 upload_dataset['url_paste'], is_multi_byte = datatypes.sniff.stream_to_file( StringIO.StringIO( upload_dataset['url_paste'] ), prefix="strio_url_paste_" )
             else:
@@ -336,12 +373,15 @@ def create_paramfile( trans, uploaded_datasets ):
                          to_posix_lines=getattr(uploaded_dataset, "to_posix_lines", True),
                          space_to_tab=uploaded_dataset.space_to_tab,
                          in_place=trans.app.config.external_chown_script is None,
-                         path=uploaded_dataset.path )
+                         path=uploaded_dataset.path)
             # TODO: This will have to change when we start bundling inputs.
             # Also, in_place above causes the file to be left behind since the
             # user cannot remove it unless the parent directory is writable.
             if link_data_only == 'copy_files' and trans.app.config.external_chown_script:
                 _chown( uploaded_dataset.path )
+        json.update(dict(multifiles = uploaded_dataset.multifiles,
+                         ftp_directories = uploaded_dataset.ftp_directories,
+                         ftp_mergefiles = uploaded_dataset.ftp_mergefiles))
         json_file.write( dumps( json ) + '\n' )
     json_file.close()
     if trans.app.config.external_chown_script:

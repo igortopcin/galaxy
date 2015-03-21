@@ -16,6 +16,8 @@ from galaxy.datatypes.registry import Registry
 from galaxy import util
 from galaxy.datatypes.util.image_util import *
 from galaxy.util.json import *
+import tarfile
+
 
 try:
     import Image as PIL
@@ -64,6 +66,101 @@ def parse_outputs( args ):
         id, files_path, path = arg.split( ':', 2 )
         rval[int( id )] = ( path, files_path )
     return rval
+def multifile_gzip(filepath, dataset, json_file, in_place):
+    """ For making multifile unzipping possible
+    """
+    is_gzipped, is_valid = check_gzip( filepath )
+    if is_gzipped and not is_valid:
+        file_err( 'The gzipped uploaded file contains inappropriate content', dataset, json_file )
+        return
+    elif is_gzipped and is_valid:
+        # We need to uncompress the temp_name file, but BAM files must remain compressed in the BGZF format
+        CHUNK_SIZE = 2**20 # 1Mb
+        fd, uncompressed = tempfile.mkstemp( prefix='%s_upload_gunzip_' % \
+                os.path.basename(filepath), dir=os.path.dirname( filepath ), text=False )
+        gzipped_file = gzip.GzipFile( filepath, 'rb' )
+        while 1:
+            try:
+                chunk = gzipped_file.read( CHUNK_SIZE )
+            except IOError:
+                os.close( fd )
+                os.remove( uncompressed )
+                file_err( 'Problem decompressing gzipped data', dataset, json_file )
+                return
+            if not chunk:
+                break
+            os.write( fd, chunk )
+        os.close( fd )
+        gzipped_file.close()
+        # Replace the gzipped file with the decompressed file if it's safe to do so
+        if dataset.type in ( 'server_dir', 'path_paste' ) or not in_place:
+            # dataset.path = uncompressed #FIXME look at this, dataset.path is
+            # different when using the multifiles
+            pass
+        else:
+            shutil.move( uncompressed, filepath )
+        os.chmod(filepath, 0644)
+        # dataset.name = dataset.name.rstrip( '.gz' )
+
+
+def merge_multifiles(dataset, datatype, json_file, in_place):
+    if datatype.composite_type == 'multifile': # merge as composite_data
+        dataset.composite_files = {}
+        extra_files_path = 'dataset_%s_files' % dataset.dataset_id
+        galaxy_datadir = os.path.split( sys.argv[4].split(':')[-1] )[0]
+        dataset.extra_files_path = extra_files_path
+        os.makedirs( os.path.join(galaxy_datadir, extra_files_path) )
+
+        for fn in dataset.multifiles:
+            # sometimes 'filename' contains the full file path
+            filename = os.path.split(fn['filename'])[1]
+            local_filename = fn['local_filename']
+            dataset.composite_files[filename] = util.bunch.Bunch(name=filename)
+            multifile_gzip(local_filename, dataset, json_file, in_place)
+            shutil.copy(local_filename, os.path.join( galaxy_datadir, extra_files_path, filename))
+
+        try:
+            fd, outfile = tempfile.mkstemp(prefix='uploaded_multifile', dir=os.path.split(dataset.path)[0])
+            with open(outfile, 'w') as fp:
+                fp.write('<html><head></head><body>Composite {0} dataset<br></body></html>'.format(dataset.file_type) )
+        except Exception, e:
+            if fd:
+                os.close(fd)
+            stop_err('Could not create merged composite dataset: %s' %e)
+        else:
+            for fn in dataset.multifiles:
+                os.remove(fn['local_filename'])
+            if fd:
+                os.close(fd)
+            # reset the datasets attributes
+            dataset.path = outfile
+            dataset.type = 'file'
+
+    elif len(dataset.multifiles) > 1:  # only makes sense to merge common files if there are 2 or more to merge
+        multifiles = [fn['local_filename'] for fn in dataset.multifiles]
+        try:
+            fd = None
+            fd, outfile = tempfile.mkstemp(prefix='uploaded_multifile', dir=os.path.split(dataset.path)[0])
+            datatype.merge(multifiles, outfile)
+        except Exception, e:
+            if fd:
+                os.close(fd)
+            stop_err('Could not merge multiple uploaded files')
+        else:
+            for tmpfile in multifiles: # remove links to ftp files
+                try:
+                    os.remove(tmpfile)
+                except OSError:
+                    # When passing single files to the merge tool, they are moved instead of tarred,
+                    # which causes their disappearance and thus an OSError.
+                    pass
+            if fd:
+                os.close(fd)
+            # reset the datasets attributes
+            dataset.path = outfile
+            dataset.type = 'file'
+
+
 def add_file( dataset, registry, json_file, output_path ):
     data_type = None
     line_count = None
@@ -199,14 +296,17 @@ def add_file( dataset, registry, json_file, output_path ):
                         uncompressed = None
                         uncompressed_name = None
                         unzipped = False
+                        dataset.multifiles = [] #o
                         z = zipfile.ZipFile( dataset.path )
                         for name in z.namelist():
+                            fname = os.path.split(name)[1] #sometimes name = full path
                             if name.endswith('/'):
                                 continue
-                            if unzipped:
+                            if unzipped and dataset.type != 'multifile':
+                                # Only stops if not a multifile dataset
                                 stdout = 'ZIP file contained more than one file, only the first file was added to Galaxy.'
                                 break
-                            fd, uncompressed = tempfile.mkstemp( prefix='data_id_%s_upload_zip_' % dataset.dataset_id, dir=os.path.dirname( output_path ), text=False )
+                            fd, uncompressed = tempfile.mkstemp( prefix='data_id_%s_upload_zip_%s_' % (dataset.dataset_id, fname), dir=os.path.dirname( output_path ), text=False )
                             if sys.version_info[:2] >= ( 2, 6 ):
                                 zipped_file = z.open( name )
                                 while 1:
@@ -237,15 +337,20 @@ def add_file( dataset, registry, json_file, output_path ):
                                     os.remove( uncompressed )
                                     file_err( 'Problem decompressing zipped data', dataset, json_file )
                                     return
+
+                            # Replace the zipped file with the decompressed file if it's safe to do so
+                            if uncompressed is not None:
+                                dataset.multifiles.append(dict(
+                                        filename=uncompressed_name,
+                                        local_filename=uncompressed))
+                                if dataset.type in ( 'server_dir', 'path_paste', 'multifile' ) or not in_place:
+                                    dataset.path = uncompressed
+                                else:
+                                    shutil.move( uncompressed, dataset.path )
+                                os.chmod(dataset.path, 0644)
+                                dataset.name = fname
                         z.close()
-                        # Replace the zipped file with the decompressed file if it's safe to do so
-                        if uncompressed is not None:
-                            if dataset.type in ( 'server_dir', 'path_paste' ) or not in_place:
-                                dataset.path = uncompressed
-                            else:
-                                shutil.move( uncompressed, dataset.path )
-                            os.chmod(dataset.path, 0644)
-                            dataset.name = uncompressed_name
+
                     data_type = 'zip'
             if not data_type:
                 # TODO refactor this logic.  check_binary isn't guaranteed to be
@@ -295,7 +400,13 @@ def add_file( dataset, registry, json_file, output_path ):
         ext = dataset.ext
     if ext == 'auto':
         ext = 'data'
+
     datatype = registry.get_datatype_by_extension( ext )
+
+    # Process multifiles
+    if hasattr(dataset, 'multifiles') and dataset.multifiles not in [None, []]:
+        merge_multifiles(dataset, datatype, json_file, in_place)
+
     if dataset.type in ( 'server_dir', 'path_paste' ) and link_data_only == 'link_to_files':
         # Never alter a file that will not be copied to Galaxy's local file store.
         if datatype.dataset_content_needs_grooming( dataset.path ):
@@ -316,6 +427,13 @@ def add_file( dataset, registry, json_file, output_path ):
             shutil.copy( dataset.path, output_path )
     elif link_data_only == 'copy_files':
         shutil.move( dataset.path, output_path )
+        # clean up FTP'ed directories/files
+        if dataset.ftp_mergefiles:
+            for ftp_file in dataset.multifiles:
+                os.remove(ftp_file['original_filename'])
+        if dataset.ftp_directories:
+            for ftpdir in dataset.ftp_directories:
+                shutil.rmtree(ftpdir)
     # Write the job info
     stdout = stdout or 'uploaded %s file' % data_type
     info = dict( type = 'dataset',
