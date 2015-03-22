@@ -6,7 +6,7 @@ When you export your developed repositories for importing into another Tool Shed
 must be available in that Tool Shed..
 -->
 <user>
-    <email>admin@test.org</email>
-    <password>testuser</password>
-    <username>admin</username>
+    <email>dev@mig.ime.usp.br</email>
+    <password>migalaxy</password>
+    <username>migalaxy</username>
 </user>
