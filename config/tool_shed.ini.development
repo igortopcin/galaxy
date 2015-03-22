@@ -7,7 +7,7 @@ port = 9009
 
 # The address on which to listen.  By default, only listen to localhost (the tool shed will not
 # be accessible over the network).  Use '0.0.0.0' to listen on all available network interfaces.
-host = 0.0.0.0
+host = 172.28.128.200
 #host = 127.0.0.1
 
 use_threadpool = true
@@ -46,12 +46,6 @@ session_data_dir = /opt/database/beaker_sessions
 session_key = galaxysessions
 session_secret = changethisinproduction
 
-# -- Analytics
-
-# You can enter tracking code here to track visitor's behavior
-# through your Google Analytics account. Example: UA-XXXXXXXX-Y
-#ga_code = None
-
 # -- Users and Security
 
 # Galaxy encodes various internal values when these values will be output in
@@ -66,13 +60,6 @@ id_secret = changethisinproductiontoo
 # Enabling remote user disables regular logins.  For more information, see:
 # https://wiki.galaxyproject.org/Admin/Config/ApacheProxy
 #use_remote_user = False
-
-# If use_remote_user is enabled, anyone who can log in to the Galaxy host may
-# impersonate any other user by simply sending the appropriate header. Thus a
-# secret shared between the upstream proxy server, and Galaxy is required.
-# If anyone other than the Galaxy user is using the server, then apache/nginx should
-# pass a value in the header 'GX_SECRET' that is identical the one below
-#remote_user_secret = changethisinproductiontoo
 
 # Configuration for debugging middleware
 debug = true
@@ -125,6 +112,3 @@ use_new_layout = true
 #static_favicon_dir = static/favicon.ico
 #static_scripts_dir = static/scripts/
 #static_style_dir = static/style/blue
-
-# Sentry (getsentry.com) DSN for catching bugs.
-#sentry_dsn = None

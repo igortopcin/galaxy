@@ -32,3 +32,11 @@ Not all dependencies are included for the tools provided in the sample
 tool_conf.xml. A full list of external dependencies is available at:
 
 https://wiki.galaxyproject.org/Admin/Tools/ToolDependencies
+
+USING VAGRANT
+=============
+
+While developing MIGalaxy, you may use Vagrant to speedup environment configuration. There are 2 VMs configured in Vagrant: galaxy (primary) and toolshed (not autostarted).
+
+NOTE: This configuration uses a private network. On a MAC, it is common to run into DHCP server problems when starting the VMs. If this is your case, please read the following: https://github.com/Chassis/Chassis/wiki/dhcp-private_network-failing-on-VirtualBox
+
