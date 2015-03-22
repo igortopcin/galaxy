@@ -110,15 +110,15 @@ class ScrambleEgg( Egg ):
         if self.tag:
             urls.extend( map( lambda x: '.'.join( ( url_base + self.tag, x ) ), arctypes ) )
         self.source_path = self.fetch_one( urls )
-        if self.source_path is None:
+        if self.source_path is None and not self.sources:
             raise Exception( "%s(): Couldn't find a suitable source archive for %s %s from %s" % ( sys._getframe().f_code.co_name, self.name, self.version, self.url ) )
         for url in self.sources:
             if not urlparse.urlparse( url )[0]:
                 url = self.url + '/' + url.lstrip( '/' )
             urls = [ url ]
             urls.extend( map( lambda x: '.'.join( ( url, x ) ), arctypes ) ) # allows leaving off the extension and we'll try to find one
-            file = self.fetch_one( urls )
-            if file is None:
+            self.source_path = self.fetch_one( urls )
+            if self.source_path is None:
                 raise Exception( "%s(): Couldn't fetch extra source for %s, check path in %s.  URL(s) attempted output above." % ( sys._getframe().f_code.co_name, self.name, Crate.config_file, ) )
     def unpack_source( self ):
         unpack_dir = os.path.join( ScrambleEgg.build_dir, self.platform )
