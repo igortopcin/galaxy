@@ -6,15 +6,19 @@
     <link rel="stylesheet" href="style/base.css" type="text/css" />
 </head>
 <body>
-    <div class="document">
-        <div class="donemessagelarge">
-            <strong>Hello world! It's running...</strong>
-            <hr>
-            To customize this page edit <code>static/welcome.html</code>
+    <div class="container">
+        <div class="row">
+            <p class="lead" style="margin-top: 1em; margin-bottom: 2em;">
+                <b>CHU N&icirc;mes Galaxy</b> is a web-based platform for data intensive medical research, based on the
+                <b>Galaxy</b> project.
+                If you are new to Galaxy <a href="http://usegalaxy.org/galaxy101" target="_blank">start here</a>
+                or consult our <a id="toggleHelp">help resources</a>.
+            </p>
         </div>
         <br/>
+        <img src="images/logo_CHUNimes.png" alt="CHU N&icirc;mes" style="display: block; margin-left: auto; margin-right: auto;" />
         <hr/>
-        <a target="_blank" class="reference" href="http://galaxyproject.org/">Galaxy</a> is an open, web-based platform for data intensive biomedical research.  The <a target="_blank" class="reference" href="http://wiki.galaxyproject.org/GalaxyTeam">Galaxy team</a> is a part of <a target="_blank" class="reference" href="http://www.bx.psu.edu">BX</a> at <a target="_blank" class="reference" href="http://www.psu.edu">Penn State</a>, and the <a target="_blank" class="reference" href="http://www.biology.emory.edu/">Biology</a> and <a target="_blank" class="reference" href="http://www.mathcs.emory.edu/">Mathematics and Computer Science</a> departments at <a target="_blank" class="reference" href="http://www.emory.edu/">Emory University</a>.  The <a target="_blank" class="reference" href="http://galaxyproject.org/">Galaxy Project</a> is supported in part by <a target="_blank" class="reference" href="http://www.genome.gov">NHGRI</a>, <a target="_blank" class="reference" href="http://www.nsf.gov">NSF</a>, <a target="_blank" class="reference" href="http://www.huck.psu.edu">The Huck Institutes of the Life Sciences</a>, <a target="_blank" class="reference" href="http://www.ics.psu.edu">The Institute for CyberScience at Penn State</a>, and <a target="_blank" class="reference" href="http://www.emory.edu/">Emory University</a>.</p>
+        <a target="_blank" class="reference" href="http://www.chu-nimes.fr/">CHU N&icirc;mes</a> <a target="_blank" class="reference" href="http://galaxyproject.org/">Galaxy</a> is a web-based platform for data intensive medical research.  The <a target="_blank" class="reference" href="http://escience.ime.usp.br/MIG/">Medical Imaging Group team</a> is a part of the <a target="_blank" class="reference" href="http://escience.ime.usp.br/">e-Science Group</a> in the department of <a target="_blank" class="reference" href="https://www.ime.usp.br/dcc">Computer Science</a> at <a target="_blank" class="reference" href="https://www.ime.usp.br/">IME</a> - <a target="_blank" class="reference" href="http://www.usp.br">University of Sao Paulo</a>.</p>
 
     </div>
 </body>
