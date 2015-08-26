@@ -2,15 +2,18 @@
 Provides factory methods to assemble the Galaxy web application
 """
 
-import atexit
 import os
-import os.path
 import sys
+import atexit
 
-from paste import httpexceptions
-import pkg_resources
+try:
+    import configparser
+except:
+    import ConfigParser as configparser
+
 
 import galaxy.app
+from galaxy.config import process_is_uwsgi
 import galaxy.model
 import galaxy.model.mapping
 import galaxy.datatypes.registry
@@ -19,6 +22,10 @@ import galaxy.web.framework.webapp
 from galaxy import util
 from galaxy.util import asbool
 from galaxy.util.properties import load_app_properties
+
+from galaxy import eggs
+eggs.require('Paste')
+from paste import httpexceptions
 
 import logging
 log = logging.getLogger( __name__ )
@@ -38,6 +45,10 @@ class GalaxyWebApplication( galaxy.web.framework.webapp.WebApplication ):
 
 
 def app_factory( global_conf, **kwargs ):
+    return paste_app_factory( global_conf, **kwargs )
+
+
+def paste_app_factory( global_conf, **kwargs ):
     """
     Return a wsgi application serving the root object
     """
@@ -74,9 +85,9 @@ def app_factory( global_conf, **kwargs ):
     # allow for subdirectories in extra_files_path
     webapp.add_route( '/datasets/:dataset_id/display/{filename:.+?}', controller='dataset', action='display', dataset_id=None, filename=None)
     webapp.add_route( '/datasets/:dataset_id/:action/:filename', controller='dataset', action='index', dataset_id=None, filename=None)
-    webapp.add_route( '/display_application/:dataset_id/:app_name/:link_name/:user_id/:app_action/:action_param',
+    webapp.add_route( '/display_application/:dataset_id/:app_name/:link_name/:user_id/:app_action/:action_param/{action_param_extra:.+?}',
                       controller='dataset', action='display_application', dataset_id=None, user_id=None,
-                      app_name=None, link_name=None, app_action=None, action_param=None )
+                      app_name=None, link_name=None, app_action=None, action_param=None, action_param_extra=None )
     webapp.add_route( '/u/:username/d/:slug/:filename', controller='dataset', action='display_by_username_and_slug', filename=None )
     webapp.add_route( '/u/:username/p/:slug', controller='page', action='display_by_username_and_slug' )
     webapp.add_route( '/u/:username/h/:slug', controller='history', action='display_by_username_and_slug' )
@@ -97,37 +108,52 @@ def app_factory( global_conf, **kwargs ):
     if kwargs.get( 'middleware', True ):
         webapp = wrap_in_middleware( webapp, global_conf, **kwargs )
     if asbool( kwargs.get( 'static_enabled', True) ):
-        if app.config.is_uwsgi:
+        if process_is_uwsgi:
             log.error("Static middleware is enabled in your configuration but this is a uwsgi process.  Refusing to wrap in static middleware.")
         else:
             webapp = wrap_in_static( webapp, global_conf, plugin_frameworks=[ app.visualizations_registry ], **kwargs )
-    if asbool(kwargs.get('pack_scripts', False)):
-        log.warn( "The 'pack_scripts' option is deprecated" )
-        pack_scripts()
     # Close any pooled database connections before forking
     try:
-        galaxy.model.mapping.metadata.engine.connection_provider._pool.dispose()
+        galaxy.model.mapping.metadata.bind.dispose()
     except:
-        pass
+        log.exception("Unable to dispose of pooled galaxy model database connections.")
     try:
-        galaxy.model.tool_shed_install.mapping.metadata.engine.connection_provider._pool.dispose()
+        # This model may not actually be bound.
+        if galaxy.model.tool_shed_install.mapping.metadata.bind:
+            galaxy.model.tool_shed_install.mapping.metadata.bind.dispose()
     except:
-        pass
+        log.exception("Unable to dispose of pooled toolshed install model database connections.")
 
-    if not app.config.is_uwsgi:
+    if not process_is_uwsgi:
         postfork_setup()
 
     # Return
     return webapp
 
 
+def uwsgi_app_factory():
+    import uwsgi
+    root = os.path.abspath(uwsgi.opt.get('galaxy_root', os.getcwd()))
+    config_file = uwsgi.opt.get('galaxy_config_file', os.path.join(root, 'config', 'galaxy.ini'))
+    global_conf = {
+        '__file__' : config_file if os.path.exists(__file__) else None,
+        'here' : root }
+    parser = configparser.ConfigParser()
+    parser.read(config_file)
+    try:
+        kwargs = dict(parser.items('app:main'))
+    except configparser.NoSectionError:
+        kwargs = {}
+    return app_factory(global_conf, **kwargs)
+
+
 @postfork
 def postfork_setup():
     from galaxy.app import app
-    if app.config.is_uwsgi:
+    if process_is_uwsgi:
         import uwsgi
         app.config.server_name += ".%s" % uwsgi.worker_id()
-    app.setup_control_queue()
+    app.control_worker.bind_and_start()
 
 
 def populate_api_routes( webapp, app ):
@@ -208,6 +234,11 @@ def populate_api_routes( webapp, app ):
     webapp.mapper.resource( 'remote_file', 'remote_files', path_prefix='/api' )
     webapp.mapper.resource( 'group', 'groups', path_prefix='/api' )
     webapp.mapper.resource_with_deleted( 'quota', 'quotas', path_prefix='/api' )
+
+    # =======================
+    # ====== TOOLS API ======
+    # =======================
+
     webapp.mapper.connect( '/api/tools/{id:.+?}/build', action='build', controller="tools" )
     webapp.mapper.connect( '/api/tools/{id:.+?}/reload', action='reload', controller="tools" )
     webapp.mapper.connect( '/api/tools/{id:.+?}/diagnostics', action='diagnostics', controller="tools" )
@@ -215,6 +246,7 @@ def populate_api_routes( webapp, app ):
     webapp.mapper.connect( '/api/tools/{id:.+?}/download', action='download', controller="tools" )
     webapp.mapper.connect( '/api/tools/{id:.+?}', action='show', controller="tools" )
     webapp.mapper.resource( 'tool', 'tools', path_prefix='/api' )
+
     webapp.mapper.resource_with_deleted( 'user', 'users', path_prefix='/api' )
     webapp.mapper.resource( 'genome', 'genomes', path_prefix='/api' )
     webapp.mapper.resource( 'visualization', 'visualizations', path_prefix='/api' )
@@ -241,7 +273,7 @@ def populate_api_routes( webapp, app ):
     webapp.mapper.resource( 'datatype',
                             'datatypes',
                             path_prefix='/api',
-                            collection={ 'sniffers': 'GET', 'mapping': 'GET', 'converters': 'GET' },
+                            collection={ 'sniffers': 'GET', 'mapping': 'GET', 'converters': 'GET', 'edam_formats': 'GET' },
                             parent_resources=dict( member_name='datatype', collection_name='datatypes' ) )
     webapp.mapper.resource( 'search', 'search', path_prefix='/api' )
     webapp.mapper.resource( 'page', 'pages', path_prefix="/api")
@@ -531,20 +563,6 @@ def populate_api_routes( webapp, app ):
                            action="create", conditions=dict( method=["POST"] ) )
 
 
-def pack_scripts():
-    from glob import glob
-    from subprocess import call
-    cmd = "java -jar scripts/yuicompressor.jar --type js static/scripts/%(fname)s -o static/scripts/packed/%(fname)s"
-    raw_js = [os.path.basename(g) for g in glob( "static/scripts/*.js" )]
-    for fname in raw_js:
-        if os.path.exists('static/scripts/packed/%s' % fname):
-            if os.path.getmtime('static/scripts/packed/%s' % fname) > os.path.getmtime('static/scripts/%s' % fname):
-                continue  # Skip, packed is newer than source.
-        d = dict( fname=fname )
-        log.info("%(fname)s --> packed/%(fname)s" % d)
-        call( cmd % d, shell=True )
-
-
 def _add_item_tags_controller( webapp, name_prefix, path_prefix, **kwd ):
     # Not just using map.resources because actions should be based on name not id
     controller = "%stags" % name_prefix
@@ -641,16 +659,19 @@ def wrap_in_middleware( app, global_conf, **local_conf ):
             from paste.debug import profile
             app = profile.ProfileMiddleware( app, conf )
             log.debug( "Enabling 'profile' middleware" )
-    if debug and asbool( conf.get( 'use_interactive', False ) ):
+    if debug and asbool( conf.get( 'use_interactive', False ) ) and not process_is_uwsgi:
         # Interactive exception debugging, scary dangerous if publicly
         # accessible, if not enabled we'll use the regular error printing
         # middleware.
-        pkg_resources.require( "WebError" )
+        eggs.require( "WebError" )
         from weberror import evalexception
         app = evalexception.EvalException( app, conf,
                                            templating_formatters=build_template_error_formatters() )
         log.debug( "Enabling 'eval exceptions' middleware" )
     else:
+        if debug and asbool( conf.get( 'use_interactive', False ) ) and process_is_uwsgi:
+            log.error("Interactive debugging middleware is enabled in your configuration "
+                      "but this is a uwsgi process.  Refusing to wrap in interactive error middleware.")
         # Not in interactive debug mode, just use the regular error middleware
         import galaxy.web.framework.middleware.error
         app = galaxy.web.framework.middleware.error.ErrorMiddleware( app, conf )

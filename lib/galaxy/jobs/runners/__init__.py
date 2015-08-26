@@ -19,6 +19,7 @@ from galaxy import model
 from galaxy.util import DATABASE_MAX_STRING_SIZE, shrink_stream_by_size
 from galaxy.util import in_directory
 from galaxy.util import ParamsWithSpecs
+from galaxy.util import ExecutionTimer
 from galaxy.util.bunch import Bunch
 from galaxy.jobs.runners.util.job_script import job_script
 from galaxy.jobs.runners.util.env import env_to_statement
@@ -33,6 +34,8 @@ STOP_SIGNAL = object()
 JOB_RUNNER_PARAMETER_UNKNOWN_MESSAGE = "Invalid job runner parameter for this plugin: %s"
 JOB_RUNNER_PARAMETER_MAP_PROBLEM_MESSAGE = "Job runner parameter '%s' value '%s' could not be converted to the correct type"
 JOB_RUNNER_PARAMETER_VALIDATION_FAILED_MESSAGE = "Job runner parameter %s failed validation"
+
+GALAXY_LIB_ADJUST_TEMPLATE = """GALAXY_LIB="%s"; if [ "$GALAXY_LIB" != "None" ]; then if [ -n "$PYTHONPATH" ]; then PYTHONPATH="$GALAXY_LIB:$PYTHONPATH"; else PYTHONPATH="$GALAXY_LIB"; fi; export PYTHONPATH; fi;"""
 
 
 class RunnerParams( ParamsWithSpecs ):
@@ -102,11 +105,13 @@ class BaseJobRunner( object ):
     def put(self, job_wrapper):
         """Add a job to the queue (by job identifier), indicate that the job is ready to run.
         """
+        put_timer = ExecutionTimer()
         # Change to queued state before handing to worker thread so the runner won't pick it up again
         job_wrapper.change_state( model.Job.states.QUEUED )
         # Persist the destination so that the job will be included in counts if using concurrency limits
         job_wrapper.set_job_destination( job_wrapper.job_destination, None )
         self.mark_as_queued(job_wrapper)
+        log.debug("Job [%s] queued %s" % (job_wrapper.job_id, put_timer))
 
     def mark_as_queued(self, job_wrapper):
         self.work_queue.put( ( self.queue_job, job_wrapper ) )
@@ -250,11 +255,13 @@ class BaseJobRunner( object ):
         #this is terminate-able when output dataset/job is deleted
         #so that long running set_meta()s can be canceled without having to reboot the server
         if job_wrapper.get_state() not in [ model.Job.states.ERROR, model.Job.states.DELETED ] and job_wrapper.output_paths:
+            lib_adjust = GALAXY_LIB_ADJUST_TEMPLATE % job_wrapper.galaxy_lib_dir
             external_metadata_script = job_wrapper.setup_external_metadata( output_fnames=job_wrapper.get_output_fnames(),
                                                                             set_extension=True,
                                                                             tmp_dir=job_wrapper.working_directory,
                                                                             #we don't want to overwrite metadata that was copied over in init_meta(), as per established behavior
                                                                             kwds={ 'overwrite' : False } )
+            external_metadata_script = "%s %s" % (lib_adjust, external_metadata_script)
             if resolve_requirements:
                 dependency_shell_commands = self.app.datatypes_registry.set_external_metadata_tool.build_dependency_shell_commands()
                 if dependency_shell_commands:
@@ -286,6 +293,7 @@ class BaseJobRunner( object ):
         env_setup_commands.extend( self._get_egg_env_opts() or [] )
         destination = job_wrapper.job_destination or {}
         envs = destination.get( "env", [] )
+        envs.extend( job_wrapper.environment_variables )
         for env in envs:
             env_setup_commands.append( env_to_statement( env ) )
         command_line = job_wrapper.runner_command_line
@@ -341,8 +349,8 @@ class BaseJobRunner( object ):
         except:
             log.exception('Caught exception in runner state handler:')
 
-    def mark_as_resubmitted( self, job_state ):
-        job_state.job_wrapper.mark_as_resubmitted()
+    def mark_as_resubmitted( self, job_state, info=None ):
+        job_state.job_wrapper.mark_as_resubmitted( info=info )
         if not self.app.config.track_jobs_in_database:
             job_state.job_wrapper.change_state( model.Job.states.QUEUED )
             self.app.job_manager.job_handler.dispatcher.put( job_state.job_wrapper )

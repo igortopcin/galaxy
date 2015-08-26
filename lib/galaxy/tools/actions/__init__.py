@@ -1,9 +1,9 @@
 from galaxy.exceptions import ObjectInvalid
 from galaxy.model import LibraryDatasetDatasetAssociation
 from galaxy import model
-from galaxy.tools.parameters import DataToolParameter
-from galaxy.tools.parameters import DataCollectionToolParameter
+from galaxy.tools.parameters.basic import DataCollectionToolParameter, DataToolParameter
 from galaxy.tools.parameters.wrapped import WrappedParameters
+from galaxy.util import ExecutionTimer
 from galaxy.util.json import dumps
 from galaxy.util.none_like import NoneDataset
 from galaxy.util.odict import odict
@@ -32,7 +32,7 @@ class DefaultToolAction( object ):
         parameter name to Dataset instance for each tool parameter that is
         of the DataToolParameter type.
         """
-        input_datasets = dict()
+        input_datasets = odict()
 
         def visitor( prefix, input, value, parent=None ):
 
@@ -50,7 +50,7 @@ class DefaultToolAction( object ):
                             data = converted_dataset
                         else:
                             # FIXME: merge with hda.get_converted_dataset() mode as it's nearly identical.
-                            #run converter here
+                            # run converter here
                             new_data = data.datatype.convert_dataset( trans, data, target_ext, return_output=True, visible=False ).values()[0]
                             new_data.hid = data.hid
                             new_data.name = data.name
@@ -84,12 +84,12 @@ class DefaultToolAction( object ):
                         if parent:
                             parent[input.name][i] = input_datasets[ prefix + input.name + str( i + 1 ) ]
                             for conversion_name, conversion_data in conversions:
-                                #allow explicit conversion to be stored in job_parameter table
+                                # allow explicit conversion to be stored in job_parameter table
                                 parent[ conversion_name ][i] = conversion_data.id  # a more robust way to determine JSONable value is desired
                         else:
                             param_values[input.name][i] = input_datasets[ prefix + input.name + str( i + 1 ) ]
                             for conversion_name, conversion_data in conversions:
-                                #allow explicit conversion to be stored in job_parameter table
+                                # allow explicit conversion to be stored in job_parameter table
                                 param_values[ conversion_name ][i] = conversion_data.id  # a more robust way to determine JSONable value is desired
                 else:
                     input_datasets[ prefix + input.name ] = process_dataset( value )
@@ -106,7 +106,7 @@ class DefaultToolAction( object ):
                         target_dict = param_values
                     target_dict[ input.name ] = input_datasets[ prefix + input.name ]
                     for conversion_name, conversion_data in conversions:
-                        #allow explicit conversion to be stored in job_parameter table
+                        # allow explicit conversion to be stored in job_parameter table
                         target_dict[ conversion_name ] = conversion_data.id  # a more robust way to determine JSONable value is desired
             elif isinstance( input, DataCollectionToolParameter ):
                 if not value:
@@ -120,7 +120,7 @@ class DefaultToolAction( object ):
                     # some point and figure out if implicitly converting a
                     # dataset collection makes senese.
 
-                    #if i == 0:
+                    # if i == 0:
                     #    # Allow copying metadata to output, first item will be source.
                     #    input_datasets[ prefix + input.name ] = data.dataset_instance
                     input_datasets[ prefix + input.name + str( i + 1 ) ] = data
@@ -173,7 +173,9 @@ class DefaultToolAction( object ):
         input_names = []
         input_ext = 'data'
         input_dbkey = incoming.get( "dbkey", "?" )
-        for name, data in inp_data.items():
+        inp_items = inp_data.items()
+        inp_items.reverse()
+        for name, data in inp_items:
             if not data:
                 data = NoneDataset( datatypes_registry=trans.app.datatypes_registry )
                 continue
@@ -226,8 +228,8 @@ class DefaultToolAction( object ):
             if output.parent:
                 parent_to_child_pairs.append( ( output.parent, name ) )
                 child_dataset_names.add( name )
-            ## What is the following hack for? Need to document under what
-            ## conditions can the following occur? (james@bx.psu.edu)
+            # What is the following hack for? Need to document under what
+            # conditions can the following occur? (james@bx.psu.edu)
             # HACK: the output data has already been created
             #      this happens i.e. as a result of the async controller
             if name in incoming:
@@ -273,7 +275,7 @@ class DefaultToolAction( object ):
             # Store output
             out_data[ name ] = data
             if output.actions:
-                #Apply pre-job tool-output-dataset actions; e.g. setting metadata, changing format
+                # Apply pre-job tool-output-dataset actions; e.g. setting metadata, changing format
                 output_action_params = dict( out_data )
                 output_action_params.update( incoming )
                 output.actions.apply_action( data, output_action_params )
@@ -331,7 +333,9 @@ class DefaultToolAction( object ):
                         # of the hdca.
                         out_collection_instances[ name ] = hdca
                 else:
+                    handle_output_timer = ExecutionTimer()
                     handle_output( name, output )
+                    log.info("Handled output %s" % handle_output_timer)
         # Add all the top-level (non-child) datasets to the history unless otherwise specified
         for name in out_data.keys():
             if name not in child_dataset_names and name not in incoming:  # don't add children; or already existing datasets, i.e. async created
@@ -377,13 +381,15 @@ class DefaultToolAction( object ):
         for name, value in tool.params_to_strings( incoming, trans.app ).iteritems():
             job.add_parameter( name, value )
         current_user_roles = trans.get_current_user_roles()
+        access_timer = ExecutionTimer()
         for name, dataset in inp_data.iteritems():
             if dataset:
                 if not trans.app.security_agent.can_access_dataset( current_user_roles, dataset.dataset ):
-                    raise "User does not have permission to use a dataset (%s) provided for input." % data.id
+                    raise Exception("User does not have permission to use a dataset (%s) provided for input." % data.id)
                 job.add_input_dataset( name, dataset )
             else:
                 job.add_input_dataset( name, None )
+        log.info("Verified access to datasets %s" % access_timer)
         for name, dataset in out_data.iteritems():
             job.add_output_dataset( name, dataset )
         for name, dataset_collection in out_collections.iteritems():
@@ -427,7 +433,7 @@ class DefaultToolAction( object ):
                             trans.sa_session.add(jtid)
                     jtod.dataset.visible = False
                     trans.sa_session.add(jtod)
-            except Exception, e:
+            except Exception:
                 log.exception('Cannot remap rerun dependencies.')
         trans.sa_session.flush()
         # Some tools are not really executable, but jobs are still created for them ( for record keeping ).
@@ -547,7 +553,7 @@ def determine_output_format(output, parameter_context, input_datasets, random_in
         except Exception:
             pass
 
-    #process change_format tags
+    # process change_format tags
     if output.change_format is not None:
         new_format_set = False
         for change_elem in output.change_format:
@@ -556,7 +562,7 @@ def determine_output_format(output, parameter_context, input_datasets, random_in
                 if check is not None:
                     try:
                         if '$' not in check:
-                            #allow a simple name or more complex specifications
+                            # allow a simple name or more complex specifications
                             check = '${%s}' % check
                         if str( fill_template( check, context=parameter_context ) ) == when_elem.get( 'value', None ):
                             ext = when_elem.get( 'format', ext )

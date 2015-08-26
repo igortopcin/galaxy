@@ -5,16 +5,26 @@ import tarfile
 import StringIO
 import tempfile
 from time import strftime
-
+from collections import namedtuple
 from cgi import FieldStorage
 
 from galaxy import util
 from galaxy import web
+from galaxy.exceptions import RequestParameterMissingException
+from galaxy.exceptions import RequestParameterInvalidException
+from galaxy.exceptions import InsufficientPermissionsException
+from galaxy.exceptions import ActionInputError
+from galaxy.exceptions import ObjectNotFound
+from galaxy.exceptions import MalformedId
+from galaxy.exceptions import ConfigDoesNotAllowException
 from galaxy.datatypes import checkers
 from galaxy.model.orm import and_
+from galaxy.web import _future_expose_api as expose_api
+from galaxy.web import _future_expose_api_anonymous_and_sessionless as expose_api_anonymous_and_sessionless
+from galaxy.web import _future_expose_api_raw_anonymous_and_sessionless as expose_api_raw_anonymous_and_sessionless
 from galaxy.web.base.controller import BaseAPIController
 from galaxy.web.base.controller import HTTPBadRequest
-from galaxy.web.framework.helpers import time_ago
+from galaxy.webapps.tool_shed.search.repo_search import RepoSearch
 
 from tool_shed.capsule import capsule_manager
 from tool_shed.metadata import repository_metadata_manager
@@ -31,6 +41,7 @@ from tool_shed.util import repository_content_util
 from tool_shed.util import shed_util_common as suc
 from tool_shed.util import tool_util
 
+
 log = logging.getLogger( __name__ )
 
 
@@ -44,7 +55,7 @@ class RepositoriesController( BaseAPIController ):
         Adds appropriate entries to the repository registry for the repository defined by the received name and owner.
 
         :param key: the user's API key
-        
+
         The following parameters are included in the payload.
         :param tool_shed_url (required): the base URL of the Tool Shed containing the Repository
         :param name (required): the name of the Repository
@@ -161,7 +172,7 @@ class RepositoriesController( BaseAPIController ):
             ]
         }
         """
-        # Example URL: 
+        # Example URL:
         # http://<xyz>/api/repositories/get_repository_revision_install_info?name=<n>&owner=<o>&changeset_revision=<cr>
         if name and owner and changeset_revision:
             # Get the repository information.
@@ -307,24 +318,67 @@ class RepositoriesController( BaseAPIController ):
             return_dict[ key ] = val
         return return_dict
 
-    @web.expose_api_anonymous
+    @expose_api_raw_anonymous_and_sessionless
     def index( self, trans, deleted=False, owner=None, name=None, **kwd ):
         """
         GET /api/repositories
+        Displays a collection of repositories with optional criteria.
 
-        :param deleted: True/False, displays repositories that are or are not set to deleted.
-        :param owner: the owner's public username.
-        :param name: the repository name.
+        :param q:        (optional)if present search on the given query will be performed
+        :type  q:        str 
 
-        Displays a collection (list) of repositories.
+        :param page:     (optional)requested page of the search
+        :type  page:     int
+
+        :param page_size:     (optional)requested page_size of the search
+        :type  page_size:     int
+
+        :param jsonp:    (optional)flag whether to use jsonp format response, defaults to False
+        :type  jsonp:    bool
+
+        :param callback: (optional)name of the function to wrap callback in
+                         used only when jsonp is true, defaults to 'callback'
+        :type  callback: str
+
+        :param deleted:  (optional)displays repositories that are or are not set to deleted.
+        :type  deleted:  bool
+
+        :param owner:    (optional)the owner's public username.
+        :type  owner:    str
+        
+        :param name:     (optional)the repository name.
+        :type  name:     str
+
+        :returns dict:   object containing list of results
+
+        Examples:
+            GET http://localhost:9009/api/repositories
+            GET http://localhost:9009/api/repositories?q=fastq
         """
-        # Example URL: http://localhost:9009/api/repositories
         repository_dicts = []
         deleted = util.asbool( deleted )
+        q = kwd.get( 'q', '' )
+        if q:
+            page = kwd.get( 'page', 1 )
+            page_size = kwd.get( 'page_size', 10 )
+            try:
+                page = int( page )
+                page_size = int( page_size )
+            except ValueError:
+                raise RequestParameterInvalidException( 'The "page" and "page_size" parameters have to be integers.' )
+            return_jsonp = util.asbool( kwd.get( 'jsonp', False ) )
+            callback = kwd.get( 'callback', 'callback' )  
+            search_results = self._search( trans, q, page, page_size )
+            if return_jsonp:
+                response = str( '%s(%s);' % ( callback, json.dumps( search_results ) ) )
+            else:
+                response = json.dumps( search_results )
+            return response
+
         clause_list = [ and_( trans.app.model.Repository.table.c.deprecated == False,
                               trans.app.model.Repository.table.c.deleted == deleted ) ]
         if owner is not None:
-            clause_list.append( and_( trans.app.model.User.table.c.username == owner, 
+            clause_list.append( and_( trans.app.model.User.table.c.username == owner,
                                       trans.app.model.Repository.table.c.user_id == trans.app.model.User.table.c.id ) )
         if name is not None:
             clause_list.append( trans.app.model.Repository.table.c.name == name )
@@ -333,11 +387,50 @@ class RepositoriesController( BaseAPIController ):
                                           .order_by( trans.app.model.Repository.table.c.name ):
             repository_dict = repository.to_dict( view='collection',
                                                   value_mapper=self.__get_value_mapper( trans ) )
-            repository_dict[ 'url' ] = web.url_for( controller='repositories',
-                                                    action='show',
-                                                    id=trans.security.encode_id( repository.id ) )
+            repository_dict[ 'category_ids' ] = \
+                    [ trans.security.encode_id( x.category.id ) for x in repository.categories ]
             repository_dicts.append( repository_dict )
-        return repository_dicts
+        return json.dumps( repository_dicts )
+
+    def _search( self, trans, q, page=1, page_size=10 ):
+        """
+        Perform the search over TS repositories.
+        Note that search works over the Whoosh index which you have
+        to pre-create with scripts/tool_shed/build_ts_whoosh_index.sh manually.
+        Also TS config option toolshed_search_on has to be True and
+        whoosh_index_dir has to be specified.
+        """
+        conf = self.app.config
+        if not conf.toolshed_search_on:
+            raise ConfigDoesNotAllowException( 'Searching the TS through the API is turned off for this instance.' )
+        if not conf.whoosh_index_dir:
+            raise ConfigDoesNotAllowException( 'There is no directory for the search index specified. Please contact the administrator.' )
+        search_term = q.strip()
+        if len( search_term ) < 3:
+            raise RequestParameterInvalidException( 'The search term has to be at least 3 characters long.' )
+
+        repo_search = RepoSearch()
+        
+        Boosts = namedtuple( 'Boosts', [ 'repo_name_boost',
+                                         'repo_description_boost',
+                                         'repo_long_description_boost',
+                                         'repo_homepage_url_boost',
+                                         'repo_remote_repository_url_boost',
+                                         'repo_owner_username_boost' ] )
+        boosts = Boosts( float( conf.get( 'repo_name_boost', 0.9 ) ),
+                         float( conf.get( 'repo_description_boost', 0.6 ) ),
+                         float( conf.get( 'repo_long_description_boost', 0.5 ) ),
+                         float( conf.get( 'repo_homepage_url_boost', 0.3 ) ),
+                         float( conf.get( 'repo_remote_repository_url_boost', 0.2 ) ),
+                         float( conf.get( 'repo_owner_username_boost', 0.3 ) ) )
+
+        results = repo_search.search( trans,
+                                      search_term,
+                                      page,
+                                      page_size,
+                                      boosts )
+        results[ 'hostname' ] = web.url_for( '/', qualified = True )
+        return results
 
     @web.expose_api
     def remove_repository_registry_entry( self, trans, payload, **kwd ):
@@ -346,7 +439,7 @@ class RepositoriesController( BaseAPIController ):
         Removes appropriate entries from the repository registry for the repository defined by the received name and owner.
 
         :param key: the user's API key
-        
+
         The following parameters are included in the payload.
         :param tool_shed_url (required): the base URL of the Tool Shed containing the Repository
         :param name (required): the name of the Repository
@@ -422,7 +515,7 @@ class RepositoriesController( BaseAPIController ):
         type tool_dependecy_definition first followed by repositories of type unrestricted, and only one pass is necessary.  If
         a new repository type is introduced, the process will undoubtedly need to be revisited.  To facilitate this order, an
         in-memory list of repository ids that have been processed is maintained.
-        
+
         :param key: the API key of the Tool Shed user.
 
         The following parameters can optionally be included in the payload.
@@ -512,9 +605,9 @@ class RepositoriesController( BaseAPIController ):
         PUT /api/repositories/reset_metadata_on_repository
 
         Resets all metadata on a specified repository in the Tool Shed.
-        
+
         :param key: the API key of the Tool Shed user.
-        
+
         The following parameters must be included in the payload.
         :param repository_id: the encoded id of the repository on which metadata is to be reset.
         """
@@ -557,24 +650,157 @@ class RepositoriesController( BaseAPIController ):
             results[ 'stop_time' ] = stop_time
         return json.dumps( results, sort_keys=True, indent=4 )
 
-    @web.expose_api_anonymous
+    @expose_api_anonymous_and_sessionless
     def show( self, trans, id, **kwd ):
         """
         GET /api/repositories/{encoded_repository_id}
         Returns information about a repository in the Tool Shed.
 
+        Example URL: http://localhost:9009/api/repositories/f9cad7b01a472135
+        
         :param id: the encoded id of the Repository object
+        :type  id: encoded str
+
+        :returns:   detailed repository information
+        :rtype:     dict
+
+        :raises:  ObjectNotFound, MalformedId
         """
-        # Example URL: http://localhost:9009/api/repositories/f9cad7b01a472135
+        try:
+            trans.security.decode_id( id )
+        except Exception:
+            raise MalformedId( 'The given id is invalid.' )
+
         repository = suc.get_repository_in_tool_shed( trans.app, id )
         if repository is None:
-            log.debug( "Unable to locate repository record for id %s." % ( str( id ) ) )
-            return {}
+            raise ObjectNotFound( 'Unable to locate repository for the given id.' )
         repository_dict = repository.to_dict( view='element',
                                               value_mapper=self.__get_value_mapper( trans ) )
-        repository_dict[ 'url' ] = web.url_for( controller='repositories',
-                                                action='show',
-                                                id=trans.security.encode_id( repository.id ) )
+        # TODO the following property would be better suited in the to_dict method
+        repository_dict[ 'category_ids' ] = \
+            [ trans.security.encode_id( x.category.id ) for x in repository.categories ]
+        return repository_dict
+
+    @expose_api
+    def update( self, trans, id, **kwd ):
+        """
+        PATCH /api/repositories/{encoded_repository_id}
+        Updates information about a repository in the Tool Shed.
+
+        :param id: the encoded id of the Repository object
+
+        :param payload: dictionary structure containing::
+            'name':                  repo's name (optional)
+            'synopsis':              repo's synopsis (optional)
+            'description':           repo's description (optional)
+            'remote_repository_url': repo's remote repo (optional)
+            'homepage_url':          repo's homepage url (optional)
+            'category_ids':          list of existing encoded TS category ids
+                                     the updated repo should be associated with (optional)
+        :type payload: dict
+
+        :returns:   detailed repository information
+        :rtype:     dict
+
+        :raises: RequestParameterInvalidException, InsufficientPermissionsException
+        """
+        payload = kwd.get( 'payload', None )
+        if not payload:
+            raise RequestParameterMissingException( "You did not specify any payload." )
+
+        name = payload.get( 'name', None )
+        synopsis = payload.get( 'synopsis', None )
+        description = payload.get( 'description', None )
+        remote_repository_url = payload.get( 'remote_repository_url', None )
+        homepage_url = payload.get( 'homepage_url', None )
+        category_ids = payload.get( 'category_ids', None )
+        if category_ids is not None:
+            # We need to know if it was actually passed, and listify turns None into []
+            category_ids = util.listify( category_ids )
+
+        update_kwds = dict(
+            name=name,
+            description=synopsis,
+            long_description=description,
+            remote_repository_url=remote_repository_url,
+            homepage_url=homepage_url,
+            category_ids=category_ids,
+        )
+
+        repo, message = repository_util.update_repository( app=trans.app, trans=trans, id=id, **update_kwds )
+        if repo is None:
+            if "You are not the owner" in message:
+                raise InsufficientPermissionsException( message )
+            else:
+                raise ActionInputError( message )
+
+        repository_dict = repo.to_dict( view='element', value_mapper=self.__get_value_mapper( trans ) )
+        repository_dict[ 'category_ids' ] = \
+            [ trans.security.encode_id( x.category.id ) for x in repo.categories ]
+        return repository_dict
+
+    @expose_api
+    def create( self, trans, **kwd ):
+        """
+        create( self, trans, payload, **kwd )
+        * POST /api/repositories:
+            Creates a new repository.
+            Only ``name`` and ``synopsis`` parameters are required.
+
+        :param payload: dictionary structure containing::
+            'name':                  new repo's name (required)
+            'synopsis':              new repo's synopsis (required)
+            'description':           new repo's description (optional)
+            'remote_repository_url': new repo's remote repo (optional)
+            'homepage_url':          new repo's homepage url (optional)
+            'category_ids[]':        list of existing encoded TS category ids
+                                     the new repo should be associated with (optional)
+            'type':                  new repo's type, defaults to ``unrestricted`` (optional)
+
+        :type payload: dict
+
+        :returns:   detailed repository information
+        :rtype:     dict
+
+        :raises: RequestParameterMissingException, RequestParameterInvalidException
+        """
+        payload = kwd.get( 'payload', None )
+        if not payload:
+            raise RequestParameterMissingException( "You did not specify any payload." )
+        name = payload.get( 'name', None )
+        if not name:
+            raise RequestParameterMissingException( "Missing required parameter 'name'." )
+        synopsis = payload.get( 'synopsis', None )
+        if not synopsis:
+            raise RequestParameterMissingException( "Missing required parameter 'synopsis'." )
+
+        description = payload.get( 'description', '' )
+        remote_repository_url = payload.get( 'remote_repository_url', '' )
+        homepage_url = payload.get( 'homepage_url', '' )
+        category_ids = util.listify( payload.get( 'category_ids[]', '' ) )
+        selected_categories = [ trans.security.decode_id( id ) for id in category_ids ]
+
+        repo_type = payload.get( 'type', rt_util.UNRESTRICTED )
+        if repo_type not in rt_util.types:
+            raise RequestParameterInvalidException( 'This repository type is not valid' )
+
+        invalid_message = repository_util.validate_repository_name( trans.app, name, trans.user )
+        if invalid_message:
+            raise RequestParameterInvalidException( invalid_message )
+
+        repo, message = repository_util.create_repository( app=trans.app,
+                                                  name=name,
+                                                  type=repo_type,
+                                                  description=synopsis,
+                                                  long_description=description,
+                                                  user_id = trans.user.id,
+                                                  category_ids=category_ids,
+                                                  remote_repository_url=remote_repository_url,
+                                                  homepage_url=homepage_url )
+
+        repository_dict = repo.to_dict( view='element', value_mapper=self.__get_value_mapper( trans ) )
+        repository_dict[ 'category_ids' ] = \
+            [ trans.security.encode_id( x.category.id ) for x in repo.categories ]
         return repository_dict
 
     @web.expose_api
@@ -583,7 +809,7 @@ class RepositoriesController( BaseAPIController ):
         POST /api/repositories/{encoded_repository_id}/changeset_revision
 
         Create a new tool shed repository commit - leaving PUT on parent
-        resource open for updating meta-attirbutes of the repository (and
+        resource open for updating meta-attributes of the repository (and
         Galaxy doesn't allow PUT multipart data anyway
         https://trello.com/c/CQwmCeG6).
 
@@ -598,6 +824,15 @@ class RepositoriesController( BaseAPIController ):
         tdah = attribute_handlers.ToolDependencyAttributeHandler( trans.app, unpopulate=False )
 
         repository = suc.get_repository_in_tool_shed( trans.app, id )
+
+        if not ( trans.user_is_admin() or
+                 trans.app.security_agent.user_can_administer_repository( trans.user, repository ) or
+                 trans.app.security_agent.can_push( trans.app, trans.user, repository ) ):
+            trans.response.status = 400
+            return {
+                "err_msg": "You do not have permission to update this repository.",
+            }
+
         repo_dir = repository.repo_path( trans.app )
         repo = hg_util.get_repo_for_repository( trans.app, repository=None, repo_path=repo_dir, create=False )
 

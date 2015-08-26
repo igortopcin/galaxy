@@ -11,11 +11,11 @@ class GalaxyPackageDependencyResolver(DependencyResolver, UsesToolDependencyDirM
     resolver_type = "galaxy_packages"
 
     def __init__(self, dependency_manager, **kwds):
-        ## Galaxy tool shed requires explicit versions on XML elements,
-        ## this in inconvient for testing or Galaxy instances not utilizing
-        ## the tool shed so allow a fallback version of the Galaxy package
-        ## resolver that will just grab 'default' version of exact version
-        ## unavailable.
+        # Galaxy tool shed requires explicit versions on XML elements,
+        # this in inconvient for testing or Galaxy instances not utilizing
+        # the tool shed so allow a fallback version of the Galaxy package
+        # resolver that will just grab 'default' version of exact version
+        # unavailable.
         self.versionless = str(kwds.get('versionless', "false")).lower() == "true"
         self._init_base_path( dependency_manager, **kwds )
 
@@ -71,4 +71,4 @@ class GalaxyPackageDependency(Dependency):
             commands = 'PACKAGE_BASE=%s; export PACKAGE_BASE; . %s' % ( base_path, self.script )
         return commands
 
-__all__ = [GalaxyPackageDependencyResolver, GalaxyPackageDependency]
+__all__ = ['GalaxyPackageDependencyResolver', 'GalaxyPackageDependency']

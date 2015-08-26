@@ -5,8 +5,12 @@ immediate_actions listed below.  Currently only used in workflows.
 
 import datetime
 import logging
+import socket
 from galaxy.util import send_mail
 from galaxy.util.json import dumps
+from galaxy import eggs
+eggs.require( "MarkupSafe" )
+from markupsafe import escape
 
 log = logging.getLogger( __name__ )
 
@@ -49,7 +53,7 @@ class DefaultJobAction(object):
     @classmethod
     def get_short_str(cls, pja):
         if pja.action_arguments:
-            return "%s -> %s" % (pja.action_type, pja.action_arguments)
+            return "%s -> %s" % (pja.action_type, escape(pja.action_arguments))
         else:
             return "%s" % pja.action_type
 
@@ -63,11 +67,13 @@ class EmailAction(DefaultJobAction):
 
     @classmethod
     def execute(cls, app, sa_session, action, job, replacement_dict):
-        if action.action_arguments and 'host' in action.action_arguments:
-            host = action.action_arguments['host']
-        else:
-            host = 'usegalaxy.org'
-        frm = 'galaxy-noreply@%s' % host
+        frm = app.config.email_from
+        if frm is None:
+            if action.action_arguments and 'host' in action.action_arguments:
+                host = action.action_arguments['host']
+            else:
+                host = socket.getfqdn()
+            frm = 'galaxy-no-reply@%s' % host
         to = job.user.email
         subject = "Galaxy workflow step notification '%s'" % (job.history.name)
         outdata = ', '.join(ds.dataset.display_name() for ds in job.output_datasets)
@@ -88,7 +94,7 @@ class EmailAction(DefaultJobAction):
     @classmethod
     def get_short_str(cls, pja):
         if pja.action_arguments and 'host' in pja.action_arguments:
-            return "Email the current user from server %s when this job is complete." % pja.action_arguments['host']
+            return "Email the current user from server %s when this job is complete." % escape(pja.action_arguments['host'])
         else:
             return "Email the current user when this job is complete."
 
@@ -124,7 +130,8 @@ class ChangeDatatypeAction(DefaultJobAction):
 
     @classmethod
     def get_short_str(cls, pja):
-        return "Set the datatype of output '%s' to '%s'" % (pja.output_name, pja.action_arguments['newtype'])
+        return "Set the datatype of output '%s' to '%s'" % (escape(pja.output_name),
+                                                            escape(pja.action_arguments['newtype']))
 
 
 class RenameDatasetAction(DefaultJobAction):
@@ -232,7 +239,8 @@ class RenameDatasetAction(DefaultJobAction):
     def get_short_str(cls, pja):
         # Prevent renaming a dataset to the empty string.
         if pja.action_arguments and pja.action_arguments.get('newname', ''):
-            return "Rename output '%s' to '%s'." % (pja.output_name, pja.action_arguments['newname'])
+            return "Rename output '%s' to '%s'." % (escape(pja.output_name),
+                                                    escape(pja.action_arguments['newname']))
         else:
             return "Rename action used without a new name specified.  Output name will be unchanged."
 
@@ -257,7 +265,7 @@ class HideDatasetAction(DefaultJobAction):
 
     @classmethod
     def get_short_str(cls, pja):
-        return "Hide output '%s'." % pja.output_name
+        return "Hide output '%s'." % escape(pja.output_name)
 
 
 class DeleteDatasetAction(DefaultJobAction):
@@ -333,7 +341,7 @@ class ColumnSetAction(DefaultJobAction):
 
     @classmethod
     def get_short_str(cls, pja):
-        return "Set the following metadata values:<br/>" + "<br/>".join(['%s : %s' % (k, v) for k, v in pja.action_arguments.iteritems()])
+        return "Set the following metadata values:<br/>" + "<br/>".join(['%s : %s' % (escape(k), escape(v)) for k, v in pja.action_arguments.iteritems()])
 
 
 class SetMetadataAction(DefaultJobAction):
@@ -391,9 +399,18 @@ class DeleteIntermediatesAction(DefaultJobAction):
         # concurrently, sometimes non-terminal steps won't be cleaned up
         # because of the lag in job state updates.
         wfi = job.workflow_invocation_step.workflow_invocation
+        if wfi.active:
+            log.debug("Workflow still scheduling so new jobs may appear, skipping deletion of intermediate files.")
+            # Still evaluating workflow so we don't yet have all workflow invocation
+            # steps to start looking at.
+            return
         if wfi.workflow.has_outputs_defined():
             jobs_to_check = [wfistep.job for wfistep in wfi.steps if not wfistep.workflow_step.workflow_outputs]
             for j2c in jobs_to_check:
+                if j2c is None:
+                    # Job not yet created, this will be re-evaluated after subsequent jobs in
+                    # workflow.
+                    return
                 for input_dataset in [x.dataset for x in j2c.input_datasets if x.dataset.creating_job.workflow_invocation_step and x.dataset.creating_job.workflow_invocation_step.workflow_invocation == wfi]:
                     safe_to_delete = True
                     for job_to_check in [d_j.job for d_j in input_dataset.dependent_jobs]:
@@ -452,7 +469,8 @@ class TagDatasetAction(DefaultJobAction):
     @classmethod
     def get_short_str(cls, pja):
         if pja.action_arguments and pja.action_arguments.get('tags', ''):
-            return "Add tag(s) '%s' to '%s'." % (pja.action_arguments['tags'], pja.output_name)
+            return "Add tag(s) '%s' to '%s'." % (escape(pja.action_arguments['tags']),
+                                                 escape(pja.output_name))
         else:
             return "Tag addition action used without a tag specified.  No tag will be added."
 

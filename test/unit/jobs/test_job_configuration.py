@@ -21,6 +21,7 @@ class JobConfXmlParserTestCase( unittest.TestCase ):
             job_config_file=os.path.join( self.temp_directory, "job_conf.xml" ),
             use_tasked_jobs=False,
             job_resource_params_file="/tmp/fake_absent_path",
+            config_dict={},
         )
         self.__write_config_from( SIMPLE_JOB_CONF )
         self.app = bunch.Bunch( config=self.config, job_metrics=MockJobMetrics() )
@@ -126,6 +127,11 @@ class JobConfXmlParserTestCase( unittest.TestCase ):
         assert env_dest.env[ 2 ][ "file" ] == "/mnt/java_cluster/environment_setup.sh"
 
         assert env_dest.env[ 3 ][ "execute" ] == "module load javastuff/2.10"
+
+    def test_macro_expansion( self ):
+        self.__with_advanced_config()
+        for name in ["foo_small", "foo_medium", "foo_large", "foo_longrunning"]:
+            assert self.job_config.destinations[ name ]
 
     # TODO: Add job metrics parsing test.
 

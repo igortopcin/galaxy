@@ -551,10 +551,16 @@ class Job( object, HasJobMetrics, Dictifiable ):
             input_dict = {}
             for i in self.input_datasets:
                 if i.dataset is not None:
-                    input_dict[i.name] = {"id" : i.dataset.id, "src" : "hda"}
+                    input_dict[i.name] = {
+                        "id" : i.dataset.id, "src" : "hda",
+                        "uuid" : str(i.dataset.dataset.uuid) if i.dataset.dataset.uuid is not None else None
+                    }
             for i in self.input_library_datasets:
                 if i.dataset is not None:
-                    input_dict[i.name] = {"id" : i.dataset.id, "src" : "ldda"}
+                    input_dict[i.name] = {
+                        "id" : i.dataset.id, "src" : "ldda",
+                        "uuid": str(i.dataset.dataset.uuid) if i.dataset.dataset.uuid is not None else None
+                    }
             for k in input_dict:
                 if k in param_dict:
                     del param_dict[k]
@@ -563,10 +569,16 @@ class Job( object, HasJobMetrics, Dictifiable ):
             output_dict = {}
             for i in self.output_datasets:
                 if i.dataset is not None:
-                    output_dict[i.name] = {"id" : i.dataset.id, "src" : "hda"}
+                    output_dict[i.name] = {
+                        "id" : i.dataset.id, "src" : "hda",
+                        "uuid" : str(i.dataset.dataset.uuid) if i.dataset.dataset.uuid is not None else None
+                    }
             for i in self.output_library_datasets:
                 if i.dataset is not None:
-                    output_dict[i.name] = {"id" : i.dataset.id, "src" : "ldda"}
+                    output_dict[i.name] = {
+                        "id" : i.dataset.id, "src" : "ldda",
+                        "uuid" : str(i.dataset.dataset.uuid) if i.dataset.dataset.uuid is not None else None
+                    }
             rval['outputs'] = output_dict
 
         return rval
@@ -1335,9 +1347,8 @@ class Dataset( object ):
                     DISCARDED = 'discarded',
                     PAUSED = 'paused',
                     SETTING_METADATA = 'setting_metadata',
-                    FAILED_METADATA = 'failed_metadata',
-                    RESUBMITTED = 'resubmitted' )
-    # failed_metadata and resubmitted are only valid as DatasetInstance states currently
+                    FAILED_METADATA = 'failed_metadata')
+    # failed_metadata is only valid as DatasetInstance state currently
 
     non_ready_states = (
         states.UPLOAD,
@@ -1435,13 +1446,11 @@ class Dataset( object ):
     def get_total_size( self ):
         if self.total_size is not None:
             return self.total_size
-        if self.file_size:
-            # for backwards compatibility, set if unset
-            self.set_total_size()
-            db_session = object_session( self )
-            db_session.flush()
-            return self.total_size
-        return 0
+        # for backwards compatibility, set if unset
+        self.set_total_size()
+        db_session = object_session( self )
+        db_session.flush()
+        return self.total_size
     def set_total_size( self ):
         if self.file_size is None:
             self.set_size()
@@ -2133,7 +2142,7 @@ class Library( object, Dictifiable, HasName ):
         """
         rval = super( Library, self ).to_dict( view=view, value_mapper=value_mapper )
         if 'root_folder_id' in rval:
-            rval[ 'root_folder_id' ] = 'F' + rval[ 'root_folder_id' ]
+            rval[ 'root_folder_id' ] = 'F' + str(rval[ 'root_folder_id' ])
         return rval
     def get_active_folders( self, folder, folders=None ):
         # TODO: should we make sure the library is not deleted?
@@ -3257,12 +3266,15 @@ class WorkflowInvocation( object, Dictifiable ):
         # is relatively intutitive.
         return map( lambda wi: wi.id, query.all() )
 
-    def to_dict( self, view='collection', value_mapper=None ):
+    def to_dict( self, view='collection', value_mapper=None, step_details=False ):
         rval = super( WorkflowInvocation, self ).to_dict( view=view, value_mapper=value_mapper )
         if view == 'element':
             steps = []
             for step in self.steps:
-                v = step.to_dict()
+                if step_details:
+                    v = step.to_dict(view='element')
+                else:
+                    v = step.to_dict(view='collection')
                 steps.append( v )
             rval['steps'] = steps
 
@@ -3275,7 +3287,10 @@ class WorkflowInvocation( object, Dictifiable ):
                             src = "hda" if output_step_type == 'data_input' else 'hdca'
                             for job_input in step.job.input_datasets:
                                 if job_input.name == step_input.input_name:
-                                    inputs[str(step_input.output_step.order_index)] = { "id": job_input.dataset_id, "src": src }
+                                    inputs[str(step_input.output_step.order_index)] = {
+                                        "id": job_input.dataset_id, "src": src,
+                                        "uuid" : str(job_input.dataset.dataset.uuid) if job_input.dataset.dataset.uuid is not None else None
+                                    }
             rval['inputs'] = inputs
         return rval
 
@@ -3314,7 +3329,24 @@ class WorkflowInvocationStep( object, Dictifiable ):
     def to_dict( self, view='collection', value_mapper=None ):
         rval = super( WorkflowInvocationStep, self ).to_dict( view=view, value_mapper=value_mapper )
         rval['order_index'] = self.workflow_step.order_index
+        rval['workflow_step_label'] = self.workflow_step.label
+        rval['workflow_step_uuid'] = str(self.workflow_step.uuid)
         rval['state'] = self.job.state if self.job is not None else None
+        if self.job is not None and view=='element':
+            output_dict = {}
+            for i in self.job.output_datasets:
+                if i.dataset is not None:
+                    output_dict[i.name] = {
+                        "id" : i.dataset.id, "src" : "hda",
+                        "uuid" : str(i.dataset.dataset.uuid) if i.dataset.dataset.uuid is not None else None
+                    }
+            for i in self.job.output_library_datasets:
+                if i.dataset is not None:
+                    output_dict[i.name] = {
+                        "id" : i.dataset.id, "src" : "ldda",
+                        "uuid" : str(i.dataset.dataset.uuid) if i.dataset.dataset.uuid is not None else None
+                    }
+            rval['outputs'] = output_dict
         return rval
 
 
@@ -3647,9 +3679,6 @@ class Request( object, Dictifiable ):
         comments = ''
         # Send email
         if trans.app.config.smtp_server is not None and self.notification and self.notification[ 'email' ]:
-            host = trans.request.host.split( ':' )[0]
-            if host in [ 'localhost', '127.0.0.1', '0.0.0.0' ]:
-                host = socket.getfqdn()
             body = """
 Galaxy Sample Tracking Notification
 ===================================
@@ -3686,7 +3715,12 @@ All samples in state:     %(sample_state)s
                     txt = txt + "%s -> %s/%s\r\n" % ( s.name, library_name, folder_name )
                 body = body + txt
             to = self.notification['email']
-            frm = 'galaxy-no-reply@' + host
+            frm = trans.app.config.email_from
+            if frm is None:
+                host = trans.request.host.split( ':' )[0]
+                if host in [ 'localhost', '127.0.0.1', '0.0.0.0' ]:
+                    host = socket.getfqdn()
+                frm = 'galaxy-no-reply@' + host
             subject = "Galaxy Sample Tracking notification: '%s' sequencing request" % self.name
             try:
                 send_mail( frm, to, subject, body, trans.app.config )

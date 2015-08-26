@@ -295,8 +295,11 @@ class WorkflowContentsManager(UsesAnnotations):
                 annotation_str = ""
                 if step_annotation:
                     annotation_str = step_annotation.annotation
-                invalid_tool_form_html = """<div class="toolForm tool-node-error"><div class="toolFormTitle form-row-error">Unrecognized Tool: %s</div><div class="toolFormBody"><div class="form-row">
-                                            The tool id '%s' for this tool is unrecognized.<br/><br/>To save this workflow, you will need to delete this step or enable the tool.
+                invalid_tool_form_html = """<div class="toolForm tool-node-error">
+                                            <div class="toolFormTitle form-row-error">Unrecognized Tool: %s</div>
+                                            <div class="toolFormBody"><div class="form-row">
+                                            The tool id '%s' for this tool is unrecognized.<br/><br/>
+                                            To save this workflow, you will need to delete this step or enable the tool.
                                             </div></div></div>""" % (step.tool_id, step.tool_id)
                 step_dict = {
                     'id': step.order_index,
@@ -379,7 +382,7 @@ class WorkflowContentsManager(UsesAnnotations):
                         action_arguments=pja.action_arguments
                     )
                 step_dict['post_job_actions'] = pja_dict
-                #workflow outputs
+                # workflow outputs
                 outputs = []
                 for output in step.workflow_outputs:
                     outputs.append(output.output_name)
@@ -444,8 +447,8 @@ class WorkflowContentsManager(UsesAnnotations):
                 'tool_errors': module.get_errors(),
                 'uuid': str(step.uuid),
                 'label': step.label or None,
-                ## 'data_inputs': module.get_data_inputs(),
-                ## 'data_outputs': module.get_data_outputs(),
+                # 'data_inputs': module.get_data_inputs(),
+                # 'data_outputs': module.get_data_outputs(),
                 'annotation': annotation_str
             }
             # Add post-job actions to step dict.
@@ -569,7 +572,7 @@ class WorkflowContentsManager(UsesAnnotations):
         for step_index in step_indices:
             step_dict = supplied_steps[ step_index ]
             uuid = step_dict.get("uuid", None)
-            if uuid:
+            if uuid and uuid != "None":
                 if uuid in discovered_uuids:
                     raise exceptions.DuplicatedIdentifierException("Duplicate step UUID in request.")
                 discovered_uuids.add(uuid)
@@ -582,14 +585,13 @@ class WorkflowContentsManager(UsesAnnotations):
             yield step_dict
 
     def __module_from_dict( self, trans, step_dict, secure ):
-        """ Create a WorkflowStep model object and corrsponding module representing
-        type-specific functionality from the incoming dicitionary.
+        """ Create a WorkflowStep model object and corresponding module
+        representing type-specific functionality from the incoming dictionary.
         """
         step = model.WorkflowStep()
-
         # TODO: Consider handling position inside module.
         step.position = step_dict['position']
-        if "uuid" in step_dict:
+        if "uuid" in step_dict and step_dict['uuid'] != "None":
             step.uuid = step_dict["uuid"]
         if "label" in step_dict:
             step.label = step_dict["label"]

@@ -21,6 +21,7 @@ import galaxy.webapps.tool_shed.model.mapping
 import galaxy.web.framework.webapp
 from galaxy.webapps.tool_shed.framework.middleware import hg
 from galaxy import util
+from galaxy.config import process_is_uwsgi
 
 log = logging.getLogger( __name__ )
 
@@ -85,10 +86,20 @@ def app_factory( global_conf, **kwargs ):
                            controller='authenticate',
                            action='get_tool_shed_api_key',
                            conditions=dict( method=[ "GET" ] ) )
-    webapp.mapper.connect( 'repo_search',
-                           '/api/search/',
-                           controller='search',
-                           action='search',
+    webapp.mapper.connect( 'group',
+                           '/api/groups/',
+                           controller='groups',
+                           action='index',
+                           conditions=dict( method=[ "GET" ] ) )
+    webapp.mapper.connect( 'group',
+                           '/api/groups/',
+                           controller='groups',
+                           action='create',
+                           conditions=dict( method=[ "POST" ] ) )
+    webapp.mapper.connect( 'group',
+                           '/api/groups/:encoded_id',
+                           controller='groups',
+                           action='show',
                            conditions=dict( method=[ "GET" ] ) )
     webapp.mapper.resource( 'category',
                             'categories',
@@ -124,23 +135,41 @@ def app_factory( global_conf, **kwargs ):
                             name_prefix='user_',
                             path_prefix='/api',
                             parent_resources=dict( member_name='user', collection_name='users' ) )
+    webapp.mapper.connect( 'update_repository',
+                          '/api/repositories/:id',
+                           controller='repositories',
+                           action='update',
+                           conditions=dict( method=[ "PATCH", "PUT" ] ) )
     webapp.mapper.connect( 'repository_create_changeset_revision',
                            '/api/repositories/:id/changeset_revision',
                            controller='repositories',
                            action='create_changeset_revision',
                            conditions=dict( method=[ "POST" ] ) )
+    webapp.mapper.connect( 'create_repository',
+                           '/api/repositories',
+                           controller='repositories',
+                           action='create',
+                           conditions=dict( method=[ "POST" ] ) )
+    webapp.mapper.connect( 'tools',
+                           '/api/tools',
+                           controller='tools',
+                           action='index',
+                           conditions=dict( method=[ "GET" ] ) )
 
     webapp.finalize_config()
     # Wrap the webapp in some useful middleware
     if kwargs.get( 'middleware', True ):
         webapp = wrap_in_middleware( webapp, global_conf, **kwargs )
-    if asbool( kwargs.get( 'static_enabled', True ) ):
-        webapp = wrap_in_static( webapp, global_conf, **kwargs )
+    if asbool( kwargs.get( 'static_enabled', True) ):
+        if process_is_uwsgi:
+            log.error("Static middleware is enabled in your configuration but this is a uwsgi process.  Refusing to wrap in static middleware.")
+        else:
+            webapp = wrap_in_static( webapp, global_conf, **kwargs )
     # Close any pooled database connections before forking
     try:
-        galaxy.webapps.tool_shed.model.mapping.metadata.engine.connection_provider._pool.dispose()
+        galaxy.webapps.tool_shed.model.mapping.metadata.bind.dispose()
     except:
-        pass
+        log.exception("Unable to dispose of pooled tool_shed model database connections.")
     # Return
     return webapp
 
@@ -191,7 +220,7 @@ def wrap_in_middleware( app, global_conf, **local_conf ):
             from paste.debug import prints
             app = prints.PrintDebugMiddleware( app, conf )
             log.debug( "Enabling 'print debug' middleware" )
-    if debug and asbool( conf.get( 'use_interactive', False ) ):
+    if debug and asbool( conf.get( 'use_interactive', False ) ) and not process_is_uwsgi:
         # Interactive exception debugging, scary dangerous if publicly
         # accessible, if not enabled we'll use the regular error printing
         # middleware.
@@ -201,6 +230,9 @@ def wrap_in_middleware( app, global_conf, **local_conf ):
                                            templating_formatters=build_template_error_formatters() )
         log.debug( "Enabling 'eval exceptions' middleware" )
     else:
+        if debug and asbool( conf.get( 'use_interactive', False ) ) and process_is_uwsgi:
+            log.error("Interactive debugging middleware is enabled in your configuration "
+                      "but this is a uwsgi process.  Refusing to wrap in interactive error middleware.")
         # Not in interactive debug mode, just use the regular error middleware
         import galaxy.web.framework.middleware.error
         app = galaxy.web.framework.middleware.error.ErrorMiddleware( app, conf )

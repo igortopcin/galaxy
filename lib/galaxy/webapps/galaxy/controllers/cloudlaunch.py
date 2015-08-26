@@ -21,8 +21,6 @@ eggs.require('simplejson')
 eggs.require('bioblend')
 
 from boto.exception import EC2ResponseError
-
-
 from bioblend import cloudman
 
 log = logging.getLogger(__name__)
@@ -62,13 +60,17 @@ class CloudController(BaseUIController):
         """
         Get EC2 Account Info
         """
-        account_info = {}
-        cml = cloudman.launch.CloudManLauncher(key_id, secret)
-        ec2_conn = cml.connect_ec2(key_id, secret)
-        kps = ec2_conn.get_all_key_pairs()
-        account_info['clusters'] = cml.get_clusters_pd()
-        account_info['keypairs'] = [akp.name for akp in kps]
-        return dumps(account_info)
+        try:
+            account_info = {}
+            cml = cloudman.launch.CloudManLauncher(key_id, secret)
+            ec2_conn = cml.connect_ec2(key_id, secret)
+            kps = ec2_conn.get_all_key_pairs()
+            account_info['clusters'] = cml.get_clusters_pd()
+            account_info['keypairs'] = [akp.name for akp in kps]
+            return dumps(account_info)
+        except EC2ResponseError as e:
+            trans.response.status = 400
+            return e.message
 
     @web.expose
     def launch_instance(self, trans, cluster_name, password, key_id, secret,
@@ -112,11 +114,11 @@ class CloudController(BaseUIController):
         else:
             kp_material_tag = None
         return dumps({'cluster_name': cluster_name,
-                               'instance_id': result['rs'].instances[0].id,
-                               'image_id': result['rs'].instances[0].image_id,
-                               'public_dns_name': result['rs'].instances[0].public_dns_name,
-                               'kp_name': result['kp_name'],
-                               'kp_material_tag': kp_material_tag})
+                      'instance_id': result['rs'].instances[0].id,
+                      'image_id': result['rs'].instances[0].image_id,
+                      'public_dns_name': result['rs'].instances[0].public_dns_name,
+                      'kp_name': result['kp_name'],
+                      'kp_material_tag': kp_material_tag})
 
     @web.expose
     def get_pkey(self, trans, kp_material_tag=None):
