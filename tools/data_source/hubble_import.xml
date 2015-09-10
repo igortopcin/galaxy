@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<tool name="Hubble" id="hubble_importer_mig" tool_type="data_source" URL_method="get" force_history_refresh="True"
+      hidden="False" display_interface="True" require_login="True" version="0.0.1">
+    <description>- import from MIG XNAT</description>
+    <command interpreter="python">
+        #assert $__user__, Exception('You must be logged in to use this tool.')
+        #set $user = $__user__.preferences.get('xnat_user', None)
+        #set $password = $__user__.preferences.get('xnat_password', None)
+        #assert None not in ($user, $password), Exception('You must associate your XNAT credentials with your Galaxy
+        account.')
+        data_source.py $output $__app__.config.output_size_limit
+    </command>
+    <inputs action="http://localhost:9000/" check_values="false" method="post">
+        <display>Go to Hubble MIG server</display>
+        <param name="GALAXY_URL" type="baseurl" value="/tool_runner?tool_id=hubble_importer_mig"/>
+        <param name="sendToGalaxy" type="hidden" value="1"/>
+        <param name="xnat_user" type="hidden" value="admin"/>
+        <param name="xnat_password" type="hidden" value="admin"/>
+    </inputs>
+    <request_param_translation>
+        <request_param galaxy_name="URL_method" remote_name="urlMethod" missing="get"/>
+        <request_param galaxy_name="URL" remote_name="url" missing=""/>
+        <request_param galaxy_name="data_type" remote_name="dataType" missing="dcm">
+            <value_translation>
+                <value galaxy_value="dcm" remote_value="dicom"/>
+                <value galaxy_value="nii.gz" remote_value="nifti"/>
+            </value_translation>
+        </request_param>
+    </request_param_translation>
+    <outputs>
+        <data format="dcm" name="output"/>
+    </outputs>
+    <options sanitize="False" refresh="True"/>
+</tool>

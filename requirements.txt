@@ -61,3 +61,5 @@ bioblend
 Parsley
 WebError
 http://svgfig.googlecode.com/files/svgfig-1.1.6.tgz
+pydicom==0.9.9
+nibabel==1.3.0

@@ -1,0 +1,83 @@
+<tool id="dcm2nii" name="Image Conversion" version="2.0">
+	<description></description>
+	<command interpreter="python">
+dcm2nii_wrapper.py
+--input-dir $input_folder.extra_files_path
+--output-dir $output_nii_gz.extra_files_path
+--config $dcm2nii_ini_file
+	</command>
+	<inputs>
+		<param format="dcm" name="input_folder" type="data" label="DICOM dataset to be converted" />
+	</inputs>
+    <configfiles>
+        <configfile name="dcm2nii_ini_file">
+[BOOL]
+DebugMode=0
+UntestedFeatures=0
+UINT16toFLOAT32=1
+Verbose=0
+Anonymize=1
+AnonymizeSourceDICOM=0
+AppendAcqSeries=1
+AppendDate=1
+AppendFilename=1
+AppendPatientName=1
+AppendProtocolName=1
+AutoCrop=0
+CollapseFolders=1
+createoutputfolder=0
+CustomRename=0
+enablereorient=1
+OrthoFlipXDim=0
+EveryFile=1
+fourD=1
+Gzip=1
+ManualNIfTIConv=1
+PhilipsPrecise=0
+RecursiveUseNameAppend=0
+SingleNIIFile=1
+SPM2=0
+Stack3DImagesWithSameAcqNum=0
+Swizzle4D=1
+UseGE_0021_104F=0
+
+[INT]
+BeginClip=0
+LastClip=0
+usePigz=0
+MaxReorientMatrix=1023
+MinReorientMatrix=200
+RecursiveFolderDepth=5
+OutDirMode=0
+SiemensDTIUse0019If00181020atleast=15
+SiemensDTINoAngulationCorrectionIf00181020atleast=1000
+SiemensDTIStackIf00181020atleast=15
+
+[STR]
+OutDir=$output_nii_gz.files_path
+        </configfile>
+    </configfiles>
+	<outputs>
+		<data format="nii.gz" name="output_nii_gz" metadata_source="input_folder" label="${input_folder.metadata.PatientName}.nii.gz" />
+	</outputs>
+
+	<help>
+.. class:: infomark
+
+**Converting DICOM files to NIfTI**
+
+This tool converts a DICOM folder (i.e. a composite dataset in Galaxy) into a single NIfTI file. It also produces two
+separate text files: bval and bvec (see below).
+
+**Difusion Data**
+Diffusion sequences are sensitive to the random spontaneous motion of water molecules. This movement is
+anisotropic in fiber bundles - in other words it preferentially moves up and down the fibers whereas motion
+across the fiber is constrained. Diffusion tensor imaging (DTI) use different gradient directions so that
+different images are sensitive to specific directions. In order to process this data with medINRIA or FSL, you
+need to extract the diffusion direction information as well as the images. For these images, dcm2nii will
+attempt to generate .bvec and .bval text files. This information is extracted from the DICOM header (for Siemens
+data the software attempts to read the "B_value" and "DiffusionGradientDirection" fields from the CSA header).
+
+  	</help>
+
+</tool>
