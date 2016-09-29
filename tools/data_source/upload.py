@@ -144,7 +144,7 @@ def add_file( dataset, registry, json_file, output_path ):
             if is_gzipped and not is_valid:
                 file_err( 'The gzipped uploaded file contains inappropriate content', dataset, json_file )
                 return
-            elif is_gzipped and is_valid:
+            elif is_gzipped and is_valid and False:
                 if link_data_only == 'copy_files':
                     # We need to uncompress the temp_name file, but BAM files must remain compressed in the BGZF format
                     CHUNK_SIZE = 2 ** 20  # 1Mb
